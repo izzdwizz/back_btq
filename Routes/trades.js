@@ -8,7 +8,7 @@ const Cryptr = require("cryptr");
 const { verifyEmail } = require("../middlewares/verifyMail");
 
 const router = new express.Router();
-
+//  this gets the tradekey
 router.post("/getTradeKey", Auth, async (req, res) => {
   const { tradeKey } = req.body;
   console.log(tradeKey)
