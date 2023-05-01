@@ -3,14 +3,19 @@ const User = require("../Models/User");
 const web3 = require("web3");
 const auth = require("../middlewares/auth");
 const { validate } = require("bitcoin-address-validation");
+const { sendWelcomeMail, userSignInMail } = require("../emails/emails");
+const sendVerifyCode = require("../emails/verifyEmail");
+const { verifyEmail } = require("../middlewares/verifyMail");
+
+const { verifyCode } = require("email-verification-code");
 
 const router = new express.Router();
 
 router.post("/register", async (req, res) => {
-  const { username, email, password, walletType, wallet } = req.body;
+  const { username, email, password, walletType, walletAddress } = req.body;
 
   if (walletType === "BNB" || walletType === "ETH") {
-    const checkAddress = web3.utils.isAddress(wallet);
+    const checkAddress = web3.utils.isAddress(walletAddress);
 
     if (!checkAddress) {
       return res.status(400).send("Not a Valid address");
@@ -18,10 +23,25 @@ router.post("/register", async (req, res) => {
   }
 
   if (walletType === "BTC") {
-    const checkAddress = validate(wallet);
+    const checkAddress = validate(walletAddress);
     if (!checkAddress) {
       return res.status(400).send("Not a Valid BTC address");
     }
+  }
+
+  const checkUserEmail = await User.findOne({ email });
+  const checkUsername = await User.findOne({ username });
+
+  if (checkUsername) {
+    return res.status(400).send({
+      message: "Username already exists",
+    });
+  }
+
+  if (checkUserEmail) {
+    return res.status(400).send({
+      message: "Email already exists",
+    });
   }
 
   try {
@@ -30,27 +50,69 @@ router.post("/register", async (req, res) => {
       email,
       password,
       walletType,
-      wallet,
+      walletAddress,
     });
+    sendWelcomeMail(user.email, user.username);
     const token = await user.authToken();
+
     res.status(201).send({ user, token });
   } catch (error) {
-    res.status(400).send(error);
+    res.status(400).send(error.keyValue);
+  }
+});
+
+router.post("/getEmailVerificationCode", async (req, res, next) => {
+  const sendEmailCode = req.body;
+  const user = await User.findOne({ email: sendEmailCode.email });
+
+  try {
+    if (user?.isVerified) {
+      next();
+    }
+    sendVerifyCode(user.email);
+    res.status(200).send({ message: "Verification Code sent successfully" });
+  } catch (error) {
+    res.status(500).send({ message: "internal server error", error });
     console.log(error);
   }
 });
 
-router.post("/signIn", async (req, res) => {
+router.post("/verifyCodeSent", async (req, res, next) => {
+  const getDetails = req.body;
+  const user = await User.findOne({ email: getDetails.email });
+
+  if (user?.isVerified) {
+    next();
+  }
+
+  try {
+    const response = verifyCode(user.email, getDetails.code);
+
+    if (response.error === false) {
+      res.status(200).send("verification succesfully sent");
+      user.isVerified = true;
+      await user.save();
+    } else {
+      res.status(400).send(response.reason);
+    }
+  } catch (error) {
+    res.status(500).send({ message: "internal server error", error });
+    console.log(error);
+  }
+});
+
+router.post("/signIn", verifyEmail, async (req, res) => {
   try {
     const signInUser = await User.findByCredentials(
       req.body.email,
       req.body.password
     );
     const token = await signInUser.authToken();
-    res.send({ signInUser, token });
+    res.status(200).send({ signInUser, token });
+
+    userSignInMail(signInUser.username, signInUser.email);
   } catch (error) {
-    res.status(500).send(error + " sign in error");
-    console.log(error + " sign in error");
+    res.status(500).send(" sign in error " + error.message);
   }
 });
 
@@ -58,23 +120,26 @@ router.post("/logout", auth, async (req, res) => {
   try {
     req.user.tokens = [];
     await req.user.save();
-    res.send();
+    res.send("User logged out");
   } catch (error) {
-    res.status(500).send(error);
+    res.status(500).send(error.message || error);
   }
 });
 
-router.get("/myprofile", auth, (req, res) => {
+router.get("/myprofile", auth, async (req, res) => {
+  const user = await req.user;
   try {
-    res.send(req.user);
+    res.status(200).send({ user });
   } catch (error) {
-    res.status(401).send(error);
+    res
+      .status(401)
+      .send({ message: "Error, not found!", error: error.message });
   }
 });
 
 router.patch("/update", auth, async (req, res) => {
   const updateUser = Object.keys(req.body);
-  const updateParams = ["email", "password"];
+  const updateParams = ["email", "password", "walletType", "walletAddress"];
   const isValidation = updateUser.every((update) =>
     updateParams.includes(update)
   );
@@ -90,7 +155,7 @@ router.patch("/update", auth, async (req, res) => {
 
     res.send(user);
   } catch (error) {
-    res.status(500).send(error);
+    res.status(500).send({ error: error.message });
   }
 });
 
@@ -99,19 +164,9 @@ router.delete("/removeuser", auth, async (req, res) => {
     await req.user.remove();
 
     res.send(req.user);
-  } catch (e) {
-    res.send(500).send(e);
+  } catch (error) {
+    res.send(500).send(error.message || error);
   }
 });
-//connect wallet
-//deposit {
-// get deposit amount
-// check previous balance
-// add current deposit to previous balance
-//send new balance to user//}
-//credit balances
-//withdrawal
-//lock balances
-//check if the input exists in the database
-//send a success message
+
 module.exports = router;

@@ -8,7 +8,7 @@ const userSchema = new mongoose.Schema({
     type: String,
     trim: true,
     required: [true, "Username is required"],
-    unique: true,
+    unique: [true, "usernsme already exists"],
     max: 40,
     min: [3, "Username cannot be less than 3 characters"],
   },
@@ -16,7 +16,7 @@ const userSchema = new mongoose.Schema({
     type: String,
     required: [true, "Enter Your Email address"],
     trim: true,
-    unique: true,
+    unique: [true, "Email already exists"],
     validate(value) {
       if (!validator.isEmail(value)) {
         throw new Error("Enter a valid email address");
@@ -41,16 +41,19 @@ const userSchema = new mongoose.Schema({
     // },
   },
 
+  isVerified: {
+    type: Boolean,
+    default: false,
+  },
+
   walletType: {
     type: String,
     enum: ["BTC", "BNB", "ETH"],
     default: "BNB",
-    required: true,
   },
 
-  wallet: {
+  walletAddress: {
     type: String,
-    required: true,
     trim: true,
     min: [15, "invalid address"],
   },
@@ -69,6 +72,19 @@ const userSchema = new mongoose.Schema({
     default: Date.now,
   },
 });
+
+userSchema.virtual("deposit", {
+  ref: "Deposit_txn",
+  localField: "_id",
+  foreignField: "owner",
+});
+
+userSchema.virtual("gridTrade", {
+  ref: "Grid",
+  localField: "_id",
+  foreignField: "owner",
+});
+
 userSchema.methods.toJSON = function () {
   const user = this;
   const userObject = user.toObject();
